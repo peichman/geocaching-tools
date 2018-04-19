@@ -1,0 +1,46 @@
+#!/usr/bin/perl -w
+use strict;
+
+use DateTime;
+use Getopt::Long;
+use Term::ANSIColor;
+use XML::XPath;
+
+my $MEDIA_MOUNT_PATH = $^O eq 'darwin' ? '/Volumes' : "/media/$ENV{USER}";
+
+GetOptions(
+    'i|input=s' => \my $XML_FILE,
+    'd|date=s' => \my $DATE,
+);
+$XML_FILE ||= "$MEDIA_MOUNT_PATH/GARMIN/Garmin/geocache_logs.xml";
+$DATE ||= DateTime->now(time_zone => 'local')->ymd;
+
+my %short_result_for = (
+    'found it' => 'F',
+    'did not find' => 'DNF',
+);
+my %color_for = (
+    'found it' => 'bold green',
+    'did not find' => 'red',
+);
+
+warn "Searching for logs in $XML_FILE from $DATE\n";
+
+my $xp = XML::XPath->new(filename => $XML_FILE);
+$xp->set_namespace('g', 'http://www.garmin.com/xmlschemas/geocache_visits/v1');
+
+my $nodeset = $xp->find("/g:logs/g:log[starts-with(g:time, '$DATE')]");
+
+foreach my $node ($nodeset->get_nodelist) {
+    my $result = $xp->findvalue('g:result', $node);
+    print color($color_for{$result});
+    printf "%3s ", $short_result_for{$result};
+    my $code = $xp->findvalue('g:code', $node);
+    printf "%-28s", "http://coord.info/$code";
+    my ($time) = (split /T/, $xp->findvalue('g:time', $node))[1];
+    print " $time";
+    my $comment = $xp->findvalue('g:comment', $node);
+    print " $comment" if $comment;
+    print "\n";
+    print color('reset');
+}

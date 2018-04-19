@@ -1,0 +1,66 @@
+#!/usr/bin/perl -w
+use strict;
+
+use Archive::Zip;
+use File::Path qw{make_path};
+use File::Slurp qw{read_file};
+use File::Spec::Functions qw{catfile};
+use Getopt::Long;
+use WWW::Mechanize;
+
+my $USERNAME = $ENV{GEOCACHING_USERNAME};
+my $PASSWORD = $ENV{GEOCACHING_PASSWORD};
+
+GetOptions(
+    'd|directory=s' => \my $OUTPUT_DIR,
+);
+
+die "Usage: $0 -d <output-dir> [URL]\n" unless $OUTPUT_DIR;
+make_path(catfile($OUTPUT_DIR, 'pocketq', 'gpx'));
+
+my $mech = WWW::Mechanize->new;
+
+my $URL = shift;
+unless ($URL) {
+    # if no URL is given on the command line, assume STDIN is the
+    # HTML email from geocaching.com, and search for the link
+    my $html = read_file(\*STDIN);
+    $mech->update_html($html);
+    my $link = $mech->find_link(url_regex => qr{/pocket/downloadpq})
+        or die "Cannot find pocket/downloadpq link in input\n";
+    $URL = $link->url;
+}
+
+$mech->get($URL);
+
+if ($mech->content_type eq 'text/html') {
+    print "Logging in to " . $mech->uri->host . "\n";
+    # select and fill in login form
+    $mech->form_with_fields(qw{Username Password});
+    $mech->field(Username => $USERNAME);
+    $mech->field(Password => $PASSWORD);
+    $mech->submit;
+    # must re-GET the URL, since the query param gets lost
+    # in the login redirection
+    $mech->get($URL);
+}
+
+if ($mech->content_type ne 'application/zip') {
+    die "Something failed!\n";
+}
+
+print "Login successful, downloading file\n";
+my $res = $mech->response;
+my $output_file = catfile($OUTPUT_DIR, 'pocketq', $res->filename);
+open my $fh, '>', $output_file or die "Cannot open $output_file for writing\n";
+print "Saving to $output_file\n";
+print $fh $res->decoded_content;
+close $fh;
+
+print "Unzipping file\n";
+my $zip = Archive::Zip->new($output_file) or die "Cannot read zip file\n";
+for my $filename ($zip->memberNames) {
+    print "Extracting $filename\n";
+    $zip->extractMember($filename, catfile($OUTPUT_DIR, 'pocketq', 'gpx', $filename));
+}
+print "Done\n";
